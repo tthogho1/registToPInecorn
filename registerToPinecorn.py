@@ -25,6 +25,7 @@ index = pc.Index(pinecorn_Index)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load(clip_model, device=device)
+model=model.eval()
 
 def getImageFeatures(image_path):
     image = preprocess(Image.open(image_path)).unsqueeze(0).to(device)
@@ -67,17 +68,24 @@ with MongoClient(driver_URL) as client:
             print(filename)
             #writeLog(filename)
             imageFeature = getImageFeatures(filename)
-            print(imageFeature.shape)
+            imageFeature = imageFeature.float()
+            print(imageFeature)
             # convert tensor to vector
-            imageFeature = imageFeature.reshape(768)
-            
+            imageFeature_np = imageFeature.cpu().detach().numpy()
+            imgEmbedding = imageFeature_np.tolist()
+            print(imgEmbedding)
+
             metaInfo = createMetaInfo(webCamInfo)
             metaInfoString = json.dumps(metaInfo)
             print(metaInfoString)
             
             upsert_response = index.upsert(
                 vectors=[
-                    (webcamId, imageFeature, metaInfo),
+                    {
+                        'id' : webcamId,
+                        'values': imgEmbedding,
+                        'metadata': metaInfo,
+                    }
                 ],
                 namespace="webcamInfo"
             )
