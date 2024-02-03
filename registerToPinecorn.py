@@ -1,11 +1,14 @@
-import torch
-import clip
 import os
-import json
-import shutil
+import torch
+import numpy as np
 from PIL import Image
-from pymongo import MongoClient
+from io import BytesIO
+from transformers import AutoProcessor,CLIPProcessor, CLIPModel, CLIPTokenizer
+from sklearn.metrics.pairwise import cosine_similarity
 from pinecone import Pinecone
+from pymongo import MongoClient
+import shutil
+import json
 
 import configparser
 conf = configparser.ConfigParser()
@@ -23,15 +26,34 @@ LOGFILE = 'c:/temp/log.txt'
 pc = Pinecone(api_key=pinecorn_api_key)
 index = pc.Index(pinecorn_Index)
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model, preprocess = clip.load(clip_model, device=device)
-model=model.eval()
+def get_model_info(model_ID, device):
+	model = CLIPModel.from_pretrained(model_ID).to(device)
+	processor = AutoProcessor.from_pretrained(model_ID)
+	tokenizer = CLIPTokenizer.from_pretrained(model_ID)
+    # Return model, processor & tokenizer
+	return model, processor, tokenizer
 
-def getImageFeatures(image_path):
-    image = preprocess(Image.open(image_path)).unsqueeze(0).to(device)
-    with torch.no_grad():
-        features = model.encode_image(image)
-        return features
+# Set the device
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model_ID = "openai/clip-vit-base-patch32"
+
+model, processor, tokenizer = get_model_info(model_ID, device)
+
+
+def get_single_text_embedding(text): 
+    inputs = tokenizer(text, return_tensors = "pt")
+    # normalize input embeddings
+    text_embeddings = model.get_text_features(**inputs)
+    text_embeddings /= text_embeddings.norm(dim=-1, keepdim=True)     
+    # convert the embeddings to numpy array
+    return text_embeddings.cpu().detach().numpy()
+
+
+def get_single_image_embedding(my_image):
+    image = processor(images=my_image , return_tensors="pt")
+    embedding = model.get_image_features(**image).float()
+    # convert the embeddings to numpy array
+    return embedding.cpu().detach().numpy()
 
 def writeLog(text):
     with open(LOGFILE, 'a') as f:
@@ -39,17 +61,16 @@ def writeLog(text):
         f.write('\n')
 
 def createMetaInfo(webCamInfo):
-        webcamMetaInfo = {}
-        webcamMetaInfo["webcamid"] = str(webCamInfo["webcamid"])
-        webcamMetaInfo["status"] = webCamInfo["status"]
-        webcamMetaInfo["title"] = webCamInfo["title"]
-        webcamMetaInfo["country"] = webCamInfo["location"]["country"]
-        webcamMetaInfo["latitude"] = webCamInfo["location"]["latitude"]
-        webcamMetaInfo["longitude"] = webCamInfo["location"]["longitude"]
-        webcamMetaInfo["day"] = webCamInfo["player"]["day"]
-        webcamMetaInfo["images"] = str(webCamInfo["webcamid"])
-        
-        return webcamMetaInfo
+    return {
+        "webcamid": str(webCamInfo["webcamid"]),
+        "status": webCamInfo["status"],
+        "title": webCamInfo["title"],
+        "country": webCamInfo["location"]["country"],
+        "latitude": webCamInfo["location"]["latitude"],
+        "longitude": webCamInfo["location"]["longitude"],
+        "day": webCamInfo["player"]["day"],
+        "images": str(webCamInfo["webcamid"])
+    }
 
 with MongoClient(driver_URL) as client:
     webcamDb = client.webcam
@@ -66,14 +87,9 @@ with MongoClient(driver_URL) as client:
                 continue
             
             print(filename)
-            #writeLog(filename)
-            imageFeature = getImageFeatures(filename)
-            imageFeature = imageFeature.float()
-            print(imageFeature)
-            # convert tensor to vector
-            imageFeature_np = imageFeature.cpu().detach().numpy()
-            imgEmbedding = imageFeature_np.tolist()
-            print(imgEmbedding)
+            imageFeature_np = get_single_image_embedding(Image.open(filename))
+            imageEmbedding = imageFeature_np[0].tolist()
+            #print(imgEmbedding)
 
             metaInfo = createMetaInfo(webCamInfo)
             metaInfoString = json.dumps(metaInfo)
@@ -83,7 +99,7 @@ with MongoClient(driver_URL) as client:
                 vectors=[
                     {
                         'id' : webcamId,
-                        'values': imgEmbedding,
+                        'values': imageEmbedding,
                         'metadata': metaInfo,
                     }
                 ],
