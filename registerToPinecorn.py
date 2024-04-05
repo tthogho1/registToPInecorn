@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 from io import BytesIO
 from transformers import AutoProcessor,CLIPProcessor, CLIPModel, CLIPTokenizer
-from sklearn.metrics.pairwise import cosine_similarity
+#from sklearn.metrics.pairwise import cosine_similarity
 from pinecone import Pinecone
 from pymongo import MongoClient
 import shutil
