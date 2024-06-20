@@ -1,5 +1,5 @@
 #!/bin/sh
 
-cd /usr/src/imageSearchSvr/
-python app.py
+cd /usr/local/src/imageSearchExpress/
+node dist/index.js
  
