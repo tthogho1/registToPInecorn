@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 from io import BytesIO
 from transformers import AutoProcessor,CLIPProcessor, CLIPModel, CLIPTokenizer
-from pymongo import MongoClient
+from pymongo import MongoClient, ASCENDING
 import shutil
 import json
 
@@ -51,14 +51,10 @@ def writeLog(text):
         f.write(text)
         f.write('\n')
 
-vector_database_field_name = 'embed' # define your embedding field name.
-with MongoClient(driver_URL) as client:
-    webcamDb = client.webcam
-    webCamCol = webcamDb.webcam
 
-    # search all information
-    for webCamInfo in webCamCol.find():
-        # get webcamid from webCamInfo
+
+def process_batch(webCamInfoList : list):
+    for webCamInfo in webCamInfoList:
         try:
             webcamId = str(webCamInfo["webcamid"])
             filename = image_folder + webcamId + '.jpg'
@@ -69,15 +65,32 @@ with MongoClient(driver_URL) as client:
             print(filename)
             imageFeature_np = get_single_image_embedding(Image.open(filename))
             imageEmbedding = imageFeature_np[0].tolist()
-            #print(imgEmbedding)
+
             if vector_database_field_name not in webCamInfo:
                 webCamInfo[vector_database_field_name] = imageEmbedding
             
-            webCamCol.replace_one({'_id': webCamInfo['_id']}, webCamInfo)
-            
-            
+            webCamCol.replace_one({'_id': webCamInfo['_id']}, webCamInfo)                        
             shutil.move(filename, bkfilename)
             
         except Exception as e:
             print(e)
-            continue
+
+vector_database_field_name = 'embed' # define your embedding field name.
+with MongoClient(driver_URL) as client:
+    webcamDb = client.webcam
+    webCamCol = webcamDb.webcam
+    
+    last_id = None
+    query = {}
+    batch_size = 1000
+    while True:
+        # get webCamInfoList batch size = 1000 from webCamCol, the last '_id'
+        if last_id:
+            query['_id'] = {'$gt': last_id}        
+        
+        webCamInfoList = list(webCamCol.find(query).sort('_id', ASCENDING).limit(batch_size))
+        if not webCamInfoList:
+            break
+        
+        process_batch(webCamInfoList)
+        last_id = webCamInfoList[-1]['_id']
